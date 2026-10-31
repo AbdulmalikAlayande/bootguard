@@ -5,7 +5,8 @@
   "type": "module",
   "license": "MIT",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./ai": "./src/ai.ts"
   },
   "files": [
     "src"
@@ -18,7 +19,7 @@
     "typecheck": "tsc -p .",
     "test:node": "node --experimental-strip-types --no-warnings --test test/*.test.ts",
     "test:bun": "bun test test/",
-    "test:deno": "deno test --allow-env test/",
+    "test:deno": "deno test --allow-env --allow-net test/",
     "test": "npm run test:node && npm run test:bun && npm run test:deno"
   },
   "keywords": [

@@ -49,6 +49,14 @@ export interface BootOptions<S extends EnvSpec> {
   logger?: Logger | false;
   /** Override runtime detection (mainly for tests). */
   runtime?: RuntimeName;
+  /**
+   * Called after the failure report is printed and before exit/throw. It
+   * receives the already-masked report. Used by bootguard/ai's ghost report.
+   * Time-boxed by `onFailedTimeoutMs` (default 30s); errors are swallowed,
+   * so it can never block or replace the deterministic report.
+   */
+  onFailed?: (failure: { report: string; status: BootStatus }) => unknown;
+  onFailedTimeoutMs?: number;
 }
 
 export interface BootResult<S extends EnvSpec> {
@@ -128,11 +136,22 @@ export function createBoot<S extends EnvSpec = Record<never, never>>(
 
   const snapshot = (): BootStatus => structuredClone(status);
 
-  function fail(report: string): never {
+  async function fail(report: string): Promise<never> {
     status.state = "failed";
-    logger?.error(report);
+    logger?.error(report); // the deterministic report always comes first
     const error = new BootError(report, snapshot());
     rejectReady(error);
+    if (options.onFailed) {
+      const limit = options.onFailedTimeoutMs ?? 30_000;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        Promise.resolve()
+          .then(() => options.onFailed!({ report, status: snapshot() }))
+          .catch(() => {}),
+        new Promise((r) => { timer = setTimeout(r, limit); }),
+      ]);
+      clearTimeout(timer);
+    }
     if (failureMode === "exit") runtime.exit(1);
     throw error;
   }
@@ -147,7 +166,7 @@ export function createBoot<S extends EnvSpec = Record<never, never>>(
     // problems are masked just like check errors.
     const mask = createMasker(secretValues);
     status.envProblems = problems.map((p) => ({ ...p, message: mask(p.message) }));
-    if (problems.length) fail(formatEnvReport(status.envProblems));
+    if (problems.length) return fail(formatEnvReport(status.envProblems));
 
     // Phase 2: checks, in parallel, each bounded by retries and timeouts.
     const outcomes = await runChecks(checks, env, mask);
@@ -155,7 +174,7 @@ export function createBoot<S extends EnvSpec = Record<never, never>>(
     status.failedRequired = outcomes.filter((o) => !o.ok && o.required).map((o) => o.name);
     status.failedOptional = outcomes.filter((o) => !o.ok && !o.required).map((o) => o.name);
     status.durationMs = performance.now() - t0;
-    if (status.failedRequired.length) fail(formatCheckFailure(outcomes));
+    if (status.failedRequired.length) return fail(formatCheckFailure(outcomes));
 
     status.state = "ready";
     status.degraded = status.failedOptional.length > 0;

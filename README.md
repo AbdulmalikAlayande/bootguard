@@ -1,17 +1,74 @@
 # bootguard
 
-**Your env validator checks that your config looks right. bootguard checks that it works.**
+**No agent should boot with a ghost model.**
 
-A zero-dependency library that takes a service from "the process started" to either **ready** or **dead with one clear report**. It runs the same way on Node, Bun and Deno, and with honest limits on Cloudflare Workers.
+Your agent's process is up, and its model server answers its health route. But the model was never pulled, or its weights are still loading, or it cannot make the tool calls your agent depends on. The agent looks alive and has nothing inside it.
+
+bootguard is a zero-dependency preflight harness. It proves that an open-weight model, and everything else a service depends on, **actually works** before the service accepts any work. When boot fails, a local open-weight model reads the failure report and explains the fix.
 
 ```
 bootguard ✖ boot failed: 1 required check did not pass
 
-  ✖ database    required · 5 attempts · 3.76s · cannot reach postgres://app:****@127.0.0.1:5433/app (ECONNREFUSED)
-  ✔ analytics   optional · 1 attempt · 1ms
+  ✖ model   required · 1 attempt · 6ms · tools capability: HTTP 400 gemma3:1b does not support tools
+
+👻 ghost report (explained locally by gemma3:1b)
+
+- The agent needs tool calling, but this model has no tool support.
+- Switch MODEL_NAME to a model that supports tools, e.g. `ollama pull qwen2.5:1.5b`.
 ```
 
-## The problem
+It runs the same way on Node, Bun and Deno, and with honest limits on Cloudflare Workers.
+
+## Open-weight AI: `bootguard/ai`
+
+```ts
+import { createBoot } from "bootguard";
+import { modelCheck, ghostReport } from "bootguard/ai";
+
+const model = { baseUrl: "http://localhost:11434/v1", model: "gemma3:1b" }; // Ollama
+
+const boot = createBoot({ onFailed: ghostReport(model) });
+boot.check(modelCheck(model, { requires: ["json"] }));
+await boot.start(); // only returns when the model is genuinely usable
+```
+
+`modelCheck` works against any OpenAI-compatible server (Ollama, llama.cpp server, vLLM, LM Studio). It proves four things, in order:
+
+| Step | Catches | On failure |
+|---|---|---|
+| Server reachable | Ollama not running | retried |
+| Model present | model never pulled (it suggests `ollama pull <model>`) | fails at once |
+| Smoke prompt answers | weights still loading, cold start | retried with backoff |
+| Required capability works (`json`, `tools`) | e.g. gemma3 rejects tool calls | fails at once |
+
+The rule for retries: 4xx errors are permanent, so retrying would only send the same wrong request again. 5xx errors, timeouts and refused connections are transient, so they are retried. Any check can opt into this by throwing `FatalCheckError`.
+
+`ghostReport` is the first-class diagnosis:
+- bootguard's deterministic, masked report always prints first.
+- The local model then explains the cause and the fix.
+- It is capped at 30 seconds and is silent on any error.
+- It skips itself when the model is the thing that is down, since a dead model cannot explain itself.
+- Because the model runs locally, your failure report never leaves your machine.
+
+### Ghost-proof agent demo
+
+```sh
+ollama pull gemma3:1b            # about 800 MB
+bun examples/agent.ts            # live: refuses to start until the model is ready, then triages logs
+
+# offline, no model needed (a built-in fake server reproduces real failure modes):
+FAKE_MODEL=healthy bun examples/agent.ts   # ready, does the task
+FAKE_MODEL=loading bun examples/agent.ts   # retries while weights load, then ready
+FAKE_MODEL=missing bun examples/agent.ts   # refuses: model not pulled
+FAKE_MODEL=down    bun examples/agent.ts   # refuses: server down (ghost report skipped)
+FAKE_MODEL=notools bun examples/agent.ts   # refuses: no tool support; the ghost explains
+```
+
+### Agent skill
+
+`skills/bootguard-preflight/SKILL.md` is an [Agent Skills](https://www.mdskills.ai/specs/skill-md) file that teaches coding agents to add bootguard to any service or AI agent. To install it in Claude Code, copy the folder into `.claude/skills/`.
+
+## The problem, beyond AI
 
 Getting a service safely to "ready" usually means stitching together four unrelated tools: an env validator (Envalid, T3 Env), hand-written database pings in `main` with no retry or timeout, health routes (Lightship), and signal handling. Each one fails in its own way, and most assume Node. None of them notice that a `DATABASE_URL` which passes every format check still points at a database that refuses connections. You find out on the first real request.
 
@@ -135,7 +192,7 @@ The demo runs four scenarios against a real TCP listener standing in for a datab
 ## Tests
 
 ```sh
-npm test   # the same suite on Node, Bun and Deno
+npm test   # 35 tests, the same suite on Node, Bun and Deno, no model download needed
 ```
 
 ## Not in scope (yet)
@@ -154,6 +211,8 @@ bootguard is original code, but its design borrows openly from these projects:
 - [@cross/runtime](https://github.com/cross-org/runtime): the runtime detection order.
 - [avvio](https://github.com/fastify/avvio) (Fastify): one shared ready barrier and locking registration once boot starts.
 - [Lightship](https://github.com/gajus/lightship): probe semantics, with liveness that never consults dependencies.
+- [Ollama](https://ollama.com) and [Gemma](https://ai.google.dev/gemma): the open-weight runtime and model the demo runs on.
+- [DoltHub's pull-first Ollama image](https://dolthub.com/blog/2025-03-19-a-pull-first-ollama-docker-image): evidence that "the server is healthy but the model is missing" is a real problem.
 
 ## License
 

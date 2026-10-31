@@ -53,6 +53,18 @@ export const DEFAULT_TIMEOUT_MS = 5_000;
 export const DEFAULT_DELAY_MS = 500;
 const DEFAULT_MAX_DELAY_MS = 30_000;
 
+/**
+ * Throw this from a check when retrying cannot help (a model that does not
+ * support tools, a 401 from a bad API key). The check fails at once instead
+ * of burning its remaining attempts.
+ */
+export class FatalCheckError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FatalCheckError";
+  }
+}
+
 export class CheckTimeoutError extends Error {
   constructor(ms: number) {
     super(`timed out after ${ms}ms`);
@@ -103,13 +115,16 @@ export async function runCheck<E>(
   const timeoutMs = check.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const started = performance.now();
   let lastError: unknown;
+  let tried = 0;
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    tried = attempt;
     try {
       await attemptWithTimeout((signal) => check.run({ env, signal, attempt }), timeoutMs);
       return { name: check.name, required, ok: true, attempts: attempt, durationMs: performance.now() - started };
     } catch (err) {
       lastError = err;
+      if (err instanceof FatalCheckError) break; // retrying cannot fix this
       if (attempt < attempts) await sleep(delayFor(check.retry!, attempt));
     }
   }
@@ -118,7 +133,7 @@ export async function runCheck<E>(
     name: check.name,
     required,
     ok: false,
-    attempts,
+    attempts: tried,
     durationMs: performance.now() - started,
     error: mask(errorMessage(lastError)),
   };

@@ -5,7 +5,7 @@ export { str, num, bool, port, url, json, makeValidator, InvalidValue } from "./
 export type { Validator, ValidatorOptions } from "./validators.ts";
 
 export type { PreflightCheck, CheckContext, CheckOutcome, RetryPolicy } from "./checks.ts";
-export { CheckTimeoutError } from "./checks.ts";
+export { CheckTimeoutError, FatalCheckError } from "./checks.ts";
 
 export type { EnvSpec, EnvOf, EnvProblem } from "./env.ts";
 export type { StandardSchemaV1 } from "./standard.ts";
