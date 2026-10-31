@@ -14,6 +14,12 @@ export interface FakeModelOptions {
   tools?: boolean;
   /** Fixed port; 0 picks a free one. */
   port?: number;
+  /** Imitate servers without a /models route (404). */
+  noModelsRoute?: boolean;
+  /** Imitate a reasoning model that returns empty content. */
+  reasoning?: boolean;
+  /** Imitate a model that wraps JSON in a ```json fence. */
+  fencedJson?: boolean;
 }
 
 export interface FakeModelServer {
@@ -40,7 +46,7 @@ export async function startFakeModelServer(opts: FakeModelOptions = {}): Promise
     let raw = "";
     req.on("data", (c) => (raw += c));
     req.on("end", () => {
-      if (req.method === "GET" && req.url === "/v1/models") {
+      if (req.method === "GET" && req.url === "/v1/models" && !opts.noModelsRoute) {
         return send(res, 200, { object: "list", data: models.map((id) => ({ id, object: "model" })) });
       }
       if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
@@ -67,7 +73,7 @@ export async function startFakeModelServer(opts: FakeModelOptions = {}): Promise
           ? JSON.stringify({ note: "fake model", items: ask.split("\n").slice(1).map((line: string) => ({
               line, severity: /refused|97%/.test(line) ? "critical" : "ok" })) }, null, 2)
           : '{"ok": true}';
-        return send(res, 200, reply(body.model, { content }));
+        return send(res, 200, reply(body.model, { content: opts.fencedJson ? "```json\n" + content + "\n```" : content }));
       }
       const system = body.messages?.find((m: { role: string }) => m.role === "system")?.content ?? "";
       if (system.includes("on-call engineer")) {
@@ -78,6 +84,9 @@ export async function startFakeModelServer(opts: FakeModelOptions = {}): Promise
         return send(res, 200, reply(body.model, { content }));
       }
       const last = body.messages?.at(-1)?.content ?? "";
+      if (opts.reasoning) {
+        return send(res, 200, reply(body.model, { content: "", reasoning: "thinking..." }));
+      }
       return send(res, 200, reply(body.model, { content: /READY/.test(last) ? "READY" : `echo: ${last}` }));
     });
   });

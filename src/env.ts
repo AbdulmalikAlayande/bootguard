@@ -36,7 +36,13 @@ export async function validateEnv<S extends EnvSpec>(
 
   for (const key of Object.keys(spec)) {
     const schema = spec[key];
-    const raw = read(key);
+    let raw: string | undefined;
+    try {
+      raw = read(key);
+    } catch (err) {
+      problems.push({ key, kind: "missing", message: err instanceof Error ? err.message : String(err) });
+      continue;
+    }
     const value = isBlank(raw) ? undefined : raw;
 
     const isSecret =
@@ -61,6 +67,10 @@ export async function validateEnv<S extends EnvSpec>(
       });
     } else {
       env[key] = result.value;
+      // A secret supplied by a default (not the environment) must be masked too.
+      if (isSecret && typeof result.value === "string" && result.value !== value) {
+        secretValues.push(result.value);
+      }
     }
   }
 

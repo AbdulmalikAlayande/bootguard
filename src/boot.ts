@@ -126,6 +126,7 @@ export function createBoot<S extends EnvSpec = Record<never, never>>(
   };
 
   let started: Promise<BootResult<S>> | undefined;
+  let mask: (text: string) => string = (t) => t; // replaced once secrets are known
   let resolveReady!: (r: BootResult<S>) => void;
   let rejectReady!: (e: unknown) => void;
   const ready = new Promise<BootResult<S>>((res, rej) => {
@@ -164,7 +165,7 @@ export function createBoot<S extends EnvSpec = Record<never, never>>(
     const { env, problems, secretValues } = await validateEnv(spec, read, options.secrets);
     // Third-party validators may echo raw values in their messages, so env
     // problems are masked just like check errors.
-    const mask = createMasker(secretValues);
+    mask = createMasker(secretValues);
     status.envProblems = problems.map((p) => ({ ...p, message: mask(p.message) }));
     if (problems.length) return fail(formatEnvReport(status.envProblems));
 
@@ -227,7 +228,7 @@ export function createBoot<S extends EnvSpec = Record<never, never>>(
       started ??= run().catch((err) => {
         if (err instanceof BootError) throw err;
         // A bug inside the engine or a validator: still fail loudly, once.
-        return fail(`bootguard ✖ boot failed: unexpected error\n\n  ${String(err?.stack ?? err)}`);
+        return fail(mask(`bootguard ✖ boot failed: unexpected error\n\n  ${String(err?.stack ?? err)}`));
       });
       return started;
     },

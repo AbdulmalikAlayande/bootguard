@@ -48,7 +48,7 @@ The rule for retries: 4xx errors are permanent, so retrying would only send the 
 - The local model then explains the cause and the fix.
 - It is capped at 30 seconds and is silent on any error.
 - It skips itself when the model is the thing that is down, since a dead model cannot explain itself.
-- Because the model runs locally, your failure report never leaves your machine.
+- With a local model (Ollama on localhost), the failure report never leaves your machine. If you point `ghostReport` at a hosted endpoint, the report is sent there, already masked.
 
 ### Ghost-proof agent demo
 
@@ -174,6 +174,8 @@ Probe responses contain check **names** only, never error text, because probe en
 | Deno | `Deno.env.get(key)` per key, so `--allow-env=KEY1,KEY2` is enough | exit 1 |
 | Cloudflare Workers | pass `source: env` (or `process.env` under `nodejs_compat`) | throws `BootError` |
 
+On Workers, call `boot.start()` inside your `fetch` handler (and reuse the promise), because Workers do not allow I/O at global scope.
+
 Set `onFailure: "throw"` to receive a `BootError` (with `.report` and `.status`) instead of exiting the process. That is the right choice in tests.
 
 ## Demo
@@ -192,8 +194,32 @@ The demo runs four scenarios against a real TCP listener standing in for a datab
 ## Tests
 
 ```sh
-npm test   # 35 tests, the same suite on Node, Bun and Deno, no model download needed
+npm test   # 45 tests, the same suite on Node, Bun and Deno, no model download needed
+npm run build   # compiles src/ to dist/ (JavaScript plus .d.ts), which is what the package exports
 ```
+
+## Install
+
+bootguard is not on npm yet. Install it from GitHub:
+
+```sh
+npm i github:<owner>/bootguard     # or: bun add github:<owner>/bootguard
+```
+
+It ships compiled JavaScript with type declarations, so it works on Node (tested on 22), Bun and Deno without a TypeScript loader.
+
+## What is verified, and what is not
+
+**Verified:**
+- The same 45 tests pass on Node 22, Bun 1.4 and Deno 2.9.
+- `tsc` strict mode is clean.
+- The installed package is consumed successfully on all three runtimes.
+- Real Zod 4, Valibot 1 and ArkType 2 schemas work alongside the built-in validators.
+- Every `bootguard/ai` failure mode is tested against a fake OpenAI-compatible server that imitates Ollama's behaviour: a missing model, weights still loading, no tool support, no `/models` route, reasoning models that return empty content, and JSON wrapped in code fences.
+
+**Not yet verified:**
+- **A real Ollama run.** The demo is written for `gemma3:1b`, but CI cannot download model weights. Ollama's exact HTTP status for "does not support tools" is not confirmed. If it is a 5xx rather than a 4xx, the check retries before failing: slower, but the same clear report.
+- **Real Cloudflare Workers.** Workers mode is tested only by forcing the runtime setting.
 
 ## Not in scope (yet)
 

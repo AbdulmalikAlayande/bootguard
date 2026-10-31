@@ -116,10 +116,17 @@ export function modelCheck<E = unknown>(
     run: async ({ env, signal }) => {
       const ep = typeof endpoint === "function" ? endpoint(env) : endpoint;
 
-      // 1. Server reachable, and 2. model present.
-      const list = await call(ep, "/models", { signal }, "server");
-      const ids: string[] = (list?.data ?? []).map((m: { id: string }) => m.id);
-      const present = ids.some((id) => id === ep.model || id === `${ep.model}:latest`);
+      // 1. Server reachable, and 2. model present. Some servers have no
+      // /models route (404) or list nothing useful; then step 3 is the proof,
+      // since a missing model makes the chat call fail with its own 404.
+      let ids: string[] = [];
+      try {
+        const list = await call(ep, "/models", { signal }, "server");
+        ids = (list?.data ?? []).map((m: { id: string }) => m.id);
+      } catch (err) {
+        if (!(err instanceof FatalCheckError && /HTTP 404/.test(err.message))) throw err;
+      }
+      const present = !ids.length || ids.some((id) => id === ep.model || id === `${ep.model}:latest`);
       if (!present) {
         const hint = /:11434\b/.test(ep.baseUrl) ? ` Run: ollama pull ${ep.model}.` : "";
         throw new FatalCheckError(
@@ -134,8 +141,10 @@ export function modelCheck<E = unknown>(
         signal,
         "smoke prompt",
       );
-      const reply: string = smoke?.choices?.[0]?.message?.content ?? "";
-      if (!reply.trim()) throw new Error("smoke prompt: model returned an empty reply");
+      // Any completed choice proves inference works. Reasoning models may spend
+      // the whole token budget thinking and return empty content; that still counts.
+      if (!smoke?.choices?.length) throw new Error("smoke prompt: server returned no completion");
+      const reply: string = smoke.choices[0]?.message?.content ?? "";
       if (options.expect && !options.expect.test(reply)) {
         throw new FatalCheckError(`smoke prompt: reply did not match ${options.expect} (got "${reply.slice(0, 60)}")`);
       }
@@ -152,8 +161,11 @@ export function modelCheck<E = unknown>(
             signal,
             "json capability",
           );
+          // Some models wrap JSON in a markdown fence even in JSON mode.
+          const raw: string = res?.choices?.[0]?.message?.content ?? "";
+          const unfenced = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
           try {
-            JSON.parse(res?.choices?.[0]?.message?.content ?? "");
+            JSON.parse(unfenced);
           } catch {
             throw new FatalCheckError("json capability: model did not return valid JSON");
           }
@@ -187,6 +199,8 @@ export interface GhostReportOptions {
   maxTokens?: number;
   /** Name of the check that probes this same model, so a dead model is not asked to explain itself. Default "model". */
   modelCheckName?: string;
+  /** Give up on the explanation after this long. Default 25s. */
+  timeoutMs?: number;
 }
 
 const GHOST_PROMPT = `You are an on-call engineer. A service refused to start and printed the report below.
@@ -215,6 +229,7 @@ export function ghostReport(endpoint: ModelEndpoint, options: GhostReportOptions
       return;
     }
     const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 25_000);
     try {
       const res = await call(
         endpoint,
@@ -239,7 +254,8 @@ export function ghostReport(endpoint: ModelEndpoint, options: GhostReportOptions
     } catch {
       // Diagnostics must never fail the diagnosis: the plain report already printed.
     } finally {
-      controller.abort();
+      clearTimeout(timer);
+      controller.abort(); // never leave a request dangling
     }
   };
 }

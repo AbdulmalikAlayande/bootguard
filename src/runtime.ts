@@ -21,6 +21,9 @@ export interface RuntimeAdapter {
   exit(code: number): never;
 }
 
+/** The runtime refused to read a variable (Deno without --allow-env). */
+export class EnvAccessError extends Error {}
+
 // deno-lint-ignore no-explicit-any
 const g = globalThis as any;
 
@@ -47,7 +50,8 @@ export function createRuntimeAdapter(name: RuntimeName = detectRuntime()): Runti
           try {
             return g.Deno.env.get(key);
           } catch {
-            return undefined; // permission denied is reported as "missing"
+            // Say why, instead of claiming the variable is unset.
+            throw new EnvAccessError(`cannot be read: run Deno with --allow-env=${key}`);
           }
         },
         defaultFailureMode: "exit",
