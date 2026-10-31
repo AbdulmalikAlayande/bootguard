@@ -1,0 +1,35 @@
+{
+  "name": "bootguard",
+  "version": "0.1.0",
+  "description": "Zero-dependency, cross-runtime fail-fast boot: validate env, prove dependencies work, then serve. Node, Bun, Deno and Workers.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test:node": "node --experimental-strip-types --no-warnings --test test/*.test.ts",
+    "test:bun": "bun test test/",
+    "test:deno": "deno test --allow-env test/",
+    "test": "npm run test:node && npm run test:bun && npm run test:deno"
+  },
+  "keywords": [
+    "bootstrap",
+    "preflight",
+    "fail-fast",
+    "env",
+    "readiness",
+    "health-check",
+    "bun",
+    "deno",
+    "standard-schema"
+  ]
+}
