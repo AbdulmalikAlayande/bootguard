@@ -20,6 +20,8 @@ export interface FakeModelOptions {
   reasoning?: boolean;
   /** Imitate a model that wraps JSON in a ```json fence. */
   fencedJson?: boolean;
+  /** Models the server can serve but does not list (like a hosted router). */
+  unlisted?: string[];
 }
 
 export interface FakeModelServer {
@@ -53,7 +55,7 @@ export async function startFakeModelServer(opts: FakeModelOptions = {}): Promise
         return send(res, 404, { error: { message: "not found" } });
       }
       const body = JSON.parse(raw || "{}");
-      if (!models.includes(body.model)) {
+      if (!models.includes(body.model) && !(opts.unlisted ?? []).includes(body.model)) {
         return send(res, 404, { error: { message: `model "${body.model}" not found, try pulling it first` } });
       }
       if (Date.now() - startedAt < (opts.loadingMs ?? 0)) {

@@ -129,7 +129,7 @@ describe("ghostReport", () => {
       );
       assert.equal(out.length, 2);
       assert.match(out[0], /boot failed/);
-      assert.match(out[1], /ghost report \(explained locally by gemma3:1b\)/);
+      assert.match(out[1], /ghost report \(explained by gemma3:1b, running locally\)/);
     } finally {
       await srv.close();
     }

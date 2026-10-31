@@ -64,6 +64,34 @@ describe("audit: model servers that differ from Ollama", () => {
     }));
 });
 
+describe("audit: hosted routers (Hugging Face style)", () => {
+  it("serves a model it does not list, e.g. org/model:provider", () =>
+    withServer({ models: ["meta-llama/Llama-3.1-8B-Instruct"], unlisted: ["meta-llama/Llama-3.1-8B-Instruct:cerebras", "x/unlisted"] }, async (baseUrl) => {
+      await createBoot(quiet).check(modelCheck({ baseUrl, model: "meta-llama/Llama-3.1-8B-Instruct:cerebras" }, fast)).start();
+      await createBoot(quiet).check(modelCheck({ baseUrl, model: "x/unlisted" }, fast)).start();
+    }));
+
+  it("truncates a huge model list in the error", () =>
+    withServer({ models: Array.from({ length: 300 }, (_, i) => `org/model-${i}`) }, async (baseUrl) => {
+      const err = await bootError(createBoot(quiet).check(modelCheck({ baseUrl, model: "org/missing" }, fast)).start());
+      assert.match(err.status.checks[0].error!, /is not on this server \(has: org\/model-0, .*… 295 more\)/);
+      assert.ok(err.report.length < 400, "report stays readable");
+    }));
+
+  it("labels a localhost explainer as running locally", async () => {
+    const out: string[] = [];
+    const srv = await startFakeModelServer();
+    try {
+      await ghostReport({ baseUrl: srv.baseUrl, model: "gemma3:1b" }, { print: (t) => out.push(t) })({
+        report: "bootguard ✖ boot failed", status: { checks: [] } as never,
+      });
+      assert.match(out[0], /running locally/);
+    } finally {
+      await srv.close();
+    }
+  });
+});
+
 describe("audit: secrets", () => {
   it("masks a secret that came from a default value", async () => {
     const err = await bootError(

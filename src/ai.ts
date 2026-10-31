@@ -126,21 +126,30 @@ export function modelCheck<E = unknown>(
       } catch (err) {
         if (!(err instanceof FatalCheckError && /HTTP 404/.test(err.message))) throw err;
       }
-      const present = !ids.length || ids.some((id) => id === ep.model || id === `${ep.model}:latest`);
-      if (!present) {
-        const hint = /:11434\b/.test(ep.baseUrl) ? ` Run: ollama pull ${ep.model}.` : "";
-        throw new FatalCheckError(
-          `model "${ep.model}" is not on this server (has: ${ids.join(", ") || "none"}).${hint}`,
-        );
-      }
+      // Hosted routers (Hugging Face) accept "org/model:provider" while listing
+      // "org/model", and may not list every model they can serve. So the list
+      // is a hint, not the verdict: the chat call below is the real proof.
+      const listed =
+        !ids.length ||
+        ids.some((id) => id === ep.model || id === `${ep.model}:latest` || ep.model.startsWith(`${id}:`));
 
       // 3. Model answers. On a cold server this is where weights load.
-      const smoke = await chat(
-        ep,
-        { messages: [{ role: "user", content: options.prompt ?? "Reply with the single word READY." }] },
-        signal,
-        "smoke prompt",
-      );
+      let smoke;
+      try {
+        smoke = await chat(
+          ep,
+          { messages: [{ role: "user", content: options.prompt ?? "Reply with the single word READY." }] },
+          signal,
+          "smoke prompt",
+        );
+      } catch (err) {
+        if (!listed && err instanceof FatalCheckError) {
+          const hint = /:11434\b/.test(ep.baseUrl) ? ` Run: ollama pull ${ep.model}.` : "";
+          const shown = ids.slice(0, 5).join(", ") + (ids.length > 5 ? `, … ${ids.length - 5} more` : "");
+          throw new FatalCheckError(`model "${ep.model}" is not on this server (has: ${shown}).${hint}`);
+        }
+        throw err;
+      }
       // Any completed choice proves inference works. Reasoning models may spend
       // the whole token budget thinking and return empty content; that still counts.
       if (!smoke?.choices?.length) throw new Error("smoke prompt: server returned no completion");
@@ -250,7 +259,8 @@ export function ghostReport(endpoint: ModelEndpoint, options: GhostReportOptions
         "ghost report",
       );
       const text: string = res?.choices?.[0]?.message?.content?.trim() ?? "";
-      if (text) print(`\n👻 ghost report (explained locally by ${endpoint.model})\n\n${text}`);
+      const local = /\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/)/.test(endpoint.baseUrl);
+      if (text) print(`\n👻 ghost report (explained by ${endpoint.model}, ${local ? "running locally" : "hosted"})\n\n${text}`);
     } catch {
       // Diagnostics must never fail the diagnosis: the plain report already printed.
     } finally {
