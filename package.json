@@ -31,7 +31,8 @@
 		"test": "npm run test:node && npm run test:bun && npm run test:deno",
 		"build": "tsc -p tsconfig.build.json",
 		"prepare": "npm run build",
-		"agent": "node --experimental-strip-types --no-warnings examples/agent.ts"
+		"agent": "node --experimental-strip-types --no-warnings examples/agent.ts",
+		"dashboard": "node --experimental-strip-types --no-warnings examples/dashboard.ts"
 	},
 	"keywords": [
 		"bootstrap",
